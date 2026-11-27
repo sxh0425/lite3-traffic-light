@@ -1,5 +1,5 @@
 import base64
-import importlib.util
+from contextlib import nullcontext
 import io
 from pathlib import Path
 import tempfile
@@ -14,72 +14,103 @@ from fetch_results import destination, receive
 def preview(root, content, test=False):
     identity = {"root": str(root), "id": "local-test"}
     request = {"local": {name: remote.digest(data) for name, data in content.items()}, "test": test}
-    plan, _ = remote.plan(root, identity, request)
+    plan = remote.plan(root, identity, request)
     request["approval"] = remote.digest(remote.canonical(plan))
     request["uploads"] = {name: base64.b64encode(content[name]) for name in plan["changes"]}
     return identity, request, plan
 
 
-@unittest.skipUnless(importlib.util.find_spec("fcntl"), "Linux release activation test")
 class ReleaseTest(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
-        self.root = Path(temp.name).resolve() / "yidong-vision"
+        self.root = Path(temp.name).resolve() / "yidong"
+        self.root.mkdir()
+        self.meta = self.root / remote.METADATA
+        if remote.sys.platform == "win32":
+            lock = patch.object(remote, "deployment_lock", return_value=nullcontext())
+            lock.start()
+            self.addCleanup(lock.stop)
 
     def test_first_incremental_unchanged_and_retained(self):
-        files = {"README.md": b"first", "src/__init__.py": b"keep"}
+        (self.root / "README.md").write_bytes(b"old project")
+        (self.root / "src").mkdir()
+        (self.root / "src/__init__.py").write_bytes(b"keep")
+        files = {"src/preview.py": b"first", "src/__init__.py": b"keep"}
         identity, request, plan = preview(self.root, files)
-        self.assertEqual(plan["changes"], dict.fromkeys(files, "ADD"))
-        self.assertFalse(self.root.exists())
+        self.assertEqual(plan["changes"], {"src/preview.py": "ADD"})
+        self.assertFalse(self.meta.exists())
         first = remote.apply(self.root, identity, request)
-        old = self.root / ".releases" / first["revision"]
-        identity, request, plan = preview(self.root, {"README.md": b"second"})
+        identity, request, plan = preview(self.root, {"src/preview.py": b"second"})
         self.assertEqual(plan["retained"], ["src/__init__.py"])
-        self.assertEqual(plan["changes"], {"README.md": "MODIFY"})
+        self.assertEqual(plan["changes"], {"src/preview.py": "MODIFY"})
         second = remote.apply(self.root, identity, request)
         self.assertEqual(second["uploaded"], 1)
         self.assertEqual(second["previous"], first["revision"])
-        self.assertEqual((old / "README.md").read_bytes(), b"first")
-        self.assertEqual((self.root / "current/src/__init__.py").read_bytes(), b"keep")
-        identity, request, _ = preview(self.root, {"README.md": b"second"})
+        self.assertEqual((self.meta / second["revision"] / "before/src/preview.py").read_bytes(), b"first")
+        self.assertEqual((self.root / "src/preview.py").read_bytes(), b"second")
+        self.assertEqual((self.root / "src/__init__.py").read_bytes(), b"keep")
+        self.assertEqual((self.root / "README.md").read_bytes(), b"old project")
+        identity, request, _ = preview(self.root, {"src/preview.py": b"second"})
         self.assertEqual(remote.apply(self.root, identity, request)["uploaded"], 0)
 
-    def test_remote_edit_and_missing_pointer_stop_apply(self):
-        identity, request, _ = preview(self.root, {"README.md": b"first"})
+    def test_remote_edit_and_missing_state_stop_apply(self):
+        identity, request, _ = preview(self.root, {"src/preview.py": b"first"})
         remote.apply(self.root, identity, request)
-        identity, request, _ = preview(self.root, {"README.md": b"second"})
-        (self.root / "current/README.md").write_bytes(b"someone edited")
+        identity, request, _ = preview(self.root, {"src/preview.py": b"second"})
+        (self.root / "src/preview.py").write_bytes(b"someone edited")
         with self.assertRaisesRegex(ValueError, "Remote file changed"):
             remote.apply(self.root, identity, request)
-        (self.root / "current").unlink()
-        with self.assertRaisesRegex(ValueError, "invalid current"):
-            preview(self.root, {"README.md": b"second"})
+        (self.meta / remote.STATE_FILE).unlink()
+        with self.assertRaisesRegex(ValueError, "Missing deployment state"):
+            preview(self.root, {"src/preview.py": b"second"})
 
     def test_bad_upload_and_failed_tests_keep_previous_release(self):
-        content = {**dict.fromkeys(remote.TEST_FILES, b"# test"), "README.md": b"first"}
+        content = {**dict.fromkeys(remote.TEST_FILES, b"# test"), "src/preview.py": b"first"}
         identity, request, _ = preview(self.root, content)
         remote.apply(self.root, identity, request)
-        before = remote.current(self.root)[0]
-        content["README.md"] = b"next"
+        before = remote.load_state(self.root)
+        content["src/preview.py"] = b"next"
         identity, request, _ = preview(self.root, content, test=True)
-        bad_request = {**request, "uploads": {"README.md": base64.b64encode(b"incorrect")}}
+        bad_request = {**request, "uploads": {"src/preview.py": base64.b64encode(b"incorrect")}}
         with self.assertRaisesRegex(ValueError, "hash or size mismatch"):
             remote.apply(self.root, identity, bad_request)
         with patch.object(remote, "visual_tests", side_effect=ValueError("test failed")):
             with self.assertRaisesRegex(ValueError, "test failed"):
                 remote.apply(self.root, identity, request)
-        self.assertEqual(remote.current(self.root)[0], before)
+        self.assertEqual(remote.load_state(self.root), before)
+        self.assertEqual((self.root / "src/preview.py").read_bytes(), b"first")
 
-    def test_unmanaged_directory_rejected(self):
-        self.root.mkdir()
-        (self.root / "README.md").write_bytes(b"existing")
+    def test_requires_existing_target_and_rejects_untracked_collision(self):
         with self.assertRaises(FileNotFoundError):
-            preview(self.root, {"README.md": b"new"})
+            preview(self.root / "nonexistent", {"src/preview.py": b"new"})
+        (self.root / "src").mkdir()
+        (self.root / "src/preview.py").write_bytes(b"existing")
+        with self.assertRaisesRegex(ValueError, "Existing untracked file differs"):
+            preview(self.root, {"src/preview.py": b"new"})
+        self.assertFalse(self.meta.exists())
+
+    def test_same_approval_resumes_an_interrupted_write(self):
+        content = {"src/preview.py": b"first", "scripts/generate_simulated_data.py": b"second"}
+        identity, request, _ = preview(self.root, content)
+        link = remote.os.link
+
+        def fail_second_file(source, dest):
+            if dest.name == "generate_simulated_data.py":
+                raise OSError("simulated interruption")
+            return link(source, dest)
+
+        with patch.object(remote.os, "link", side_effect=fail_second_file):
+            with self.assertRaisesRegex(OSError, "simulated interruption"):
+                remote.apply(self.root, identity, request)
+        self.assertEqual((self.root / "src/preview.py").read_bytes(), b"first")
+        with self.assertRaisesRegex(ValueError, "Incomplete deployment"):
+            preview(self.root, content)
+        remote.apply(self.root, identity, request)
+        self.assertEqual((self.root / "scripts/generate_simulated_data.py").read_bytes(), b"second")
+        self.assertNotIn("pending", remote.load_state(self.root))
 
     def test_result_protocol_and_local_verification(self):
-        identity, request, _ = preview(self.root, {"README.md": b"first"})
-        remote.apply(self.root, identity, request)
         results = self.root / "results"
         results.mkdir()
         (results / "test.csv").write_bytes(b"state\nRED\n")
@@ -89,9 +120,8 @@ class ReleaseTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             receive(SimpleNamespace(stdout=io.BytesIO(out.getvalue())), Path(temp), ["test.csv"])
             self.assertEqual((Path(temp) / "0").read_bytes(), b"state\nRED\n")
-        (results / "leak.csv").symlink_to(self.root / "current/README.md")
-        with self.assertRaisesRegex(ValueError, "Unsafe file"):
-            remote.fetch(self.root, {"files": ["leak.csv"]})
+        with self.assertRaisesRegex(ValueError, "Invalid result path"):
+            remote.fetch(self.root, {"files": ["../README.md"]})
 
 
 class ResultTest(unittest.TestCase):

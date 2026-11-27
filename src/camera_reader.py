@@ -11,6 +11,7 @@ import numpy as np
 
 
 SourceKind = Literal["image", "video", "usb", "rtsp"]
+DEFAULT_RTSP_URL = "rtsp://127.0.0.1:8554/test"
 
 
 class CaptureError(RuntimeError):

@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 
-from _remote import MAX_SOURCE, SOURCE_FILES, canonical, digest, require
+from _remote import MAX_SOURCE, METADATA, ROOT_NAME, SOURCE_FILES, canonical, digest, require
 from _transport import ROOT, exchange
 
 
@@ -40,7 +40,8 @@ def deploy(args):
         receipt = exchange(args.ssh_config, request)
         plan = receipt["plan"]
         target = plan["target"]
-        require(plan["local"] == manifest and receipt["approval"] == digest(canonical(plan)),
+        require(plan["protocol"] == 2 and plan["local"] == manifest
+                and receipt["approval"] == digest(canonical(plan)),
                 "Invalid preview response")
         PLAN_FILE.write_bytes(canonical(receipt) + b"\n")
         print(f"Target {target['user']}@{target['host']} | {target['model']} | {target['root']}")
@@ -49,6 +50,8 @@ def deploy(args):
             print(f"{action:6} {name}")
         for name in plan["retained"]:
             print(f"KEEP   {name} (remote only)")
+        if plan["revision"] is None:
+            print(f"Deployment state and backups: {target['root']}/{METADATA}/")
         print(f"{len(plan['changes'])} upload(s), {len(manifest) - len(plan['changes'])} unchanged, "
               f"0 deletions. Visual tests {'enabled' if plan['test'] else 'disabled'}.")
         print(f"Approval digest {receipt['approval']}")
@@ -58,6 +61,8 @@ def deploy(args):
     require(PLAN_FILE.is_file(), "Run --dry-run first")
     receipt = json.loads(PLAN_FILE.read_bytes())
     plan = receipt["plan"]
+    require(plan.get("protocol") == 2 and Path(plan["target"]["root"]).name == ROOT_NAME,
+            "Deployment target changed: run dry-run again")
     require(receipt["approval"] == args.apply == digest(canonical(plan)),
             "Approval digest does not match the local preview")
     require(plan["local"] == manifest and plan["test"] == args.test,
