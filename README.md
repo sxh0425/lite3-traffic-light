@@ -7,7 +7,7 @@
 在 VS Code 打开正式工作目录。从已有 Python 环境选用能导入 OpenCV、NumPy、PyYAML 和 pytest 的解释器。部署脚本只用 Python 标准库和 Windows OpenSSH。
 
 ```powershell
-Set-Location D:\yidong\workspace
+Set-Location .\workspace  # 从本项目的上级工作目录运行
 python -B -m pytest -q -p no:cacheprovider tests/test_camera_reader.py tests/test_light_state.py
 python -B -m unittest discover -s tests -p test_deployment_tools.py -q
 python -B -m scripts.generate_simulated_data

@@ -23,5 +23,6 @@ JetPack 版本对应关系见 [NVIDIA Jetson Linux 35.4.1](https://developer.nvi
 
 ## 部署与验证
 
+- 正式开发目录是本地上级工作文件夹中的 `workspace`，也是 Git 仓库根目录。
 - 新增增量部署和按文件下载工具，日常使用本地 OpenSSH。远端只读预览确认独立目录尚未部署，首版新增 10 个文件、删除 0 个，启用两组离线视觉测试。等待用户确认首次执行。
 - Windows 验证 71 项视觉测试、2 项下载校验测试通过。5 项依赖 Linux 版本目录锁和符号链接的测试在 Windows 跳过。板端 apply、摄像头采集和 MobaXterm 显示待实测。
