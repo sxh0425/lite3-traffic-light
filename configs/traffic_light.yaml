@@ -1,0 +1,36 @@
+# ROI 按整幅画面的宽高归一化，顺序为 x、y、宽、高。示例匹配模拟数据。
+lights:
+  RED:
+    roi: [0.40, 0.15, 0.20, 0.20]
+    hue_ranges: [[0, 10], [170, 179]]
+    off_value: 102
+  YELLOW:
+    roi: [0.40, 0.40, 0.20, 0.20]
+    hue_ranges: [[16, 38]]
+    off_value: 112
+  GREEN:
+    roi: [0.40, 0.65, 0.20, 0.20]
+    hue_ranges: [[40, 92]]
+    off_value: 106
+
+analysis:
+  color_saturation: 95
+  white_saturation_max: 72
+  white_value_min: 238
+  center_radius: 0.67
+  rim_outer_radius: 0.94
+  background_inner_radius: 1.07
+  background_outer_radius: 1.36
+  min_roi_pixels: 12
+  min_background_pixels: 12
+  min_rim_color: 0.22
+  high_value: 166
+  min_bright_fraction: 0.29
+  min_value_rise: 32
+  min_local_contrast: 24
+  bright_fraction_full: 0.80
+  value_rise_full: 108
+  local_contrast_full: 110
+  score_weights: [0.36, 0.26, 0.23, 0.15]
+  min_score: 0.60
+  min_margin: 0.14
